@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: study_system_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: study
+      POSTGRES_PASSWORD: study_secret
+      POSTGRES_DB: study_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - study_pg_data:/var/lib/postgresql/data
+
+volumes:
+  study_pg_data:
