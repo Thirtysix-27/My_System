@@ -8,7 +8,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { StudyCategory } from '../common/enums';
+import { StudyCategory } from '../../common/enums';
 
 export class StartSessionDto {
   @IsUUID()
