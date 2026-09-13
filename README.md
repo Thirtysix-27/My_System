@@ -19,28 +19,27 @@ Read these before diving into code:
 |-------|------|
 | Frontend | Vue 3, TypeScript, Pinia, Vue Router, Tailwind CSS, Chart.js |
 | Backend | NestJS, TypeORM, JWT |
-| Database | PostgreSQL 16 |
+| Database | SQLite (default for local) or PostgreSQL 16 |
 
 ## Quick start
 
-### 1. Database
+Local development uses **SQLite** so you can run without Docker. Set `DATABASE_TYPE=postgres` in `backend/.env` when PostgreSQL is available (`docker compose up -d`).
 
-```bash
-docker compose up -d
-```
-
-### 2. Backend
+### 1. Backend
 
 ```bash
 cd backend
 cp .env.example .env
 npm install
+npm run seed
 npm run start:dev
 ```
 
 API: `http://localhost:3000/api/v1`
 
-### 3. Frontend
+Demo login: `demo@student.edu` / `password123`
+
+### 2. Frontend
 
 ```bash
 cd frontend

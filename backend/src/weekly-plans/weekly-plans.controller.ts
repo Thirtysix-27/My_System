@@ -11,11 +11,9 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import {
-  CreateWeeklyReviewDto,
   CreateWeeklyTargetDto,
-  GenerateWeeklyTargetsDto,
-  RollForwardDto,
   UpdateWeeklyTargetDto,
+  WeeklyReviewDto,
 } from './dto/weekly-plan.dto';
 import { WeeklyPlansService } from './weekly-plans.service';
 
@@ -29,7 +27,7 @@ export class WeeklyPlansController {
     @CurrentUser() user: { userId: string },
     @Query('week') week?: string,
   ) {
-    return this.plans.listByWeek(user.userId, week);
+    return this.plans.list(user.userId, week);
   }
 
   @Post('weekly-targets')
@@ -43,9 +41,9 @@ export class WeeklyPlansController {
   @Post('weekly-targets/generate')
   generate(
     @CurrentUser() user: { userId: string },
-    @Body() dto: GenerateWeeklyTargetsDto,
+    @Query('week') week?: string,
   ) {
-    return this.plans.generate(user.userId, dto);
+    return this.plans.generate(user.userId, week);
   }
 
   @Patch('weekly-targets/:id')
@@ -58,11 +56,11 @@ export class WeeklyPlansController {
   }
 
   @Post('weekly-targets/roll-forward')
-  rollForward(
+  roll(
     @CurrentUser() user: { userId: string },
-    @Body() dto: RollForwardDto,
+    @Query('week') week?: string,
   ) {
-    return this.plans.rollForward(user.userId, dto);
+    return this.plans.rollForward(user.userId, week);
   }
 
   @Get('recovery/plan')
@@ -73,16 +71,24 @@ export class WeeklyPlansController {
     return this.plans.recoveryPlan(user.userId, week);
   }
 
-  @Post('weekly-reviews')
-  createReview(
+  @Get('weekly-reviews/preview')
+  preview(
     @CurrentUser() user: { userId: string },
-    @Body() dto: CreateWeeklyReviewDto,
+    @Query('week') week?: string,
   ) {
-    return this.plans.createReview(user.userId, dto);
+    return this.plans.previewReview(user.userId, week);
   }
 
   @Get('weekly-reviews/latest')
-  latestReview(@CurrentUser() user: { userId: string }) {
+  latest(@CurrentUser() user: { userId: string }) {
     return this.plans.latestReview(user.userId);
+  }
+
+  @Post('weekly-reviews')
+  review(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: WeeklyReviewDto,
+  ) {
+    return this.plans.createReview(user.userId, dto);
   }
 }

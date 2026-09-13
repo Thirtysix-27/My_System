@@ -59,6 +59,9 @@ export class CoursesService {
       order: { topics: { orderIndex: 'ASC' } },
     });
     if (!course) throw new NotFoundException('Course not found');
+    course.topics = (course.topics ?? []).sort(
+      (a, b) => a.orderIndex - b.orderIndex,
+    );
     return this.withStats(course);
   }
 

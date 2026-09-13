@@ -44,6 +44,14 @@ export class TopicsService {
     return topic;
   }
 
+  async getOne(userId: string, topicId: string) {
+    const topic = await this.ownedTopic(userId, topicId);
+    return {
+      ...topic,
+      masteryLevel: masteryLevel(topic.mastery?.overallScore ?? 0),
+    };
+  }
+
   async listByCourse(userId: string, courseId: string) {
     await this.ownedCourse(userId, courseId);
     const topics = await this.topics.find({

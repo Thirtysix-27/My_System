@@ -116,6 +116,16 @@ export class StudySessionsService {
     });
   }
 
+  async findOne(userId: string, id: string) {
+    const session = await this.sessions.findOne({
+      where: { id },
+      relations: ['topic', 'course', 'topic.mastery'],
+    });
+    if (!session) throw new NotFoundException('Session not found');
+    if (session.userId !== userId) throw new ForbiddenException();
+    return session;
+  }
+
   private async findOwned(userId: string, id: string) {
     const session = await this.sessions.findOne({ where: { id } });
     if (!session) throw new NotFoundException('Session not found');

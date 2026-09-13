@@ -4,18 +4,13 @@ import {
   Delete,
   Get,
   Param,
-  Patch,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import {
-  CreateExamQuestionDto,
-  CreatePastPaperDto,
-  UpdatePastPaperDto,
-} from './dto/past-paper.dto';
+import { CreatePastPaperDto, CreateQuestionDto } from './dto/past-paper.dto';
 import { PastPapersService } from './past-papers.service';
 
 @Controller()
@@ -28,7 +23,7 @@ export class PastPapersController {
     @CurrentUser() user: { userId: string },
     @Query('courseId') courseId?: string,
   ) {
-    return this.papers.findAll(user.userId, courseId);
+    return this.papers.list(user.userId, courseId);
   }
 
   @Post('past-papers')
@@ -39,18 +34,13 @@ export class PastPapersController {
     return this.papers.create(user.userId, dto);
   }
 
-  @Get('past-papers/:id')
-  one(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
-    return this.papers.findOne(user.userId, id);
-  }
-
-  @Patch('past-papers/:id')
-  update(
+  @Post('past-papers/:id/questions')
+  addQuestion(
     @CurrentUser() user: { userId: string },
     @Param('id') id: string,
-    @Body() dto: UpdatePastPaperDto,
+    @Body() dto: CreateQuestionDto,
   ) {
-    return this.papers.update(user.userId, id, dto);
+    return this.papers.addQuestion(user.userId, id, dto);
   }
 
   @Delete('past-papers/:id')
@@ -58,20 +48,11 @@ export class PastPapersController {
     return this.papers.remove(user.userId, id);
   }
 
-  @Post('past-papers/:id/questions')
-  addQuestion(
+  @Get('courses/:courseId/topic-frequency')
+  frequency(
     @CurrentUser() user: { userId: string },
-    @Param('id') id: string,
-    @Body() dto: CreateExamQuestionDto,
+    @Param('courseId') courseId: string,
   ) {
-    return this.papers.addQuestion(user.userId, id, dto);
-  }
-
-  @Get('courses/:id/topic-frequency')
-  topicFrequency(
-    @CurrentUser() user: { userId: string },
-    @Param('id') id: string,
-  ) {
-    return this.papers.topicFrequency(user.userId, id);
+    return this.papers.topicFrequency(user.userId, courseId);
   }
 }

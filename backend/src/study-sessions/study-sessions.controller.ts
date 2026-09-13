@@ -21,6 +21,11 @@ export class StudySessionsController {
     return this.sessions.listRecent(user.userId, limit ? Number(limit) : 20);
   }
 
+  @Get(':id')
+  one(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
+    return this.sessions.findOne(user.userId, id);
+  }
+
   @Post()
   start(
     @CurrentUser() user: { userId: string },

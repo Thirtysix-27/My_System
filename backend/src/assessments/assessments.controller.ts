@@ -6,7 +6,6 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,18 +20,12 @@ export class AssessmentsController {
 
   @Get()
   list(@CurrentUser() user: { userId: string }) {
-    return this.assessments.findAll(user.userId);
+    return this.assessments.list(user.userId);
   }
 
   @Get('upcoming')
-  upcoming(
-    @CurrentUser() user: { userId: string },
-    @Query('days') days?: string,
-  ) {
-    return this.assessments.upcoming(
-      user.userId,
-      days ? Number(days) : 30,
-    );
+  upcoming(@CurrentUser() user: { userId: string }) {
+    return this.assessments.upcoming(user.userId);
   }
 
   @Post()
@@ -41,11 +34,6 @@ export class AssessmentsController {
     @Body() dto: CreateAssessmentDto,
   ) {
     return this.assessments.create(user.userId, dto);
-  }
-
-  @Get(':id')
-  one(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
-    return this.assessments.findOne(user.userId, id);
   }
 
   @Patch(':id')

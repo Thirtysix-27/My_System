@@ -6,17 +6,15 @@ import {
   IsString,
   IsUUID,
   Max,
-  MaxLength,
   Min,
 } from 'class-validator';
-import { AssessmentStatus, AssessmentType } from '../../common/enums';
+import { AssessmentStatus, AssessmentType } from '../common/enums';
 
 export class CreateAssessmentDto {
   @IsUUID()
   courseId: string;
 
   @IsString()
-  @MaxLength(160)
   title: string;
 
   @IsOptional()
@@ -34,9 +32,11 @@ export class CreateAssessmentDto {
 
   @IsOptional()
   @IsNumber()
-  @Min(0)
-  @Max(100)
   expectedMark?: number;
+
+  @IsOptional()
+  @IsNumber()
+  actualMark?: number;
 
   @IsOptional()
   @IsEnum(AssessmentStatus)
@@ -46,7 +46,6 @@ export class CreateAssessmentDto {
 export class UpdateAssessmentDto {
   @IsOptional()
   @IsString()
-  @MaxLength(160)
   title?: string;
 
   @IsOptional()
@@ -59,21 +58,15 @@ export class UpdateAssessmentDto {
 
   @IsOptional()
   @IsNumber()
-  @Min(0)
-  @Max(100)
   weight?: number;
 
   @IsOptional()
   @IsNumber()
-  @Min(0)
-  @Max(100)
-  expectedMark?: number | null;
+  expectedMark?: number;
 
   @IsOptional()
   @IsNumber()
-  @Min(0)
-  @Max(100)
-  actualMark?: number | null;
+  actualMark?: number;
 
   @IsOptional()
   @IsEnum(AssessmentStatus)

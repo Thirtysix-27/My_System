@@ -8,9 +8,7 @@ import { PastPapersController } from './past-papers.controller';
 import { PastPapersService } from './past-papers.service';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([PastPaper, ExamQuestion, Course, Topic]),
-  ],
+  imports: [TypeOrmModule.forFeature([PastPaper, ExamQuestion, Course, Topic])],
   controllers: [PastPapersController],
   providers: [PastPapersService],
   exports: [PastPapersService],

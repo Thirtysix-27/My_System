@@ -1,29 +1,19 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { addDays, toMonday } from '../common/date.util';
 import {
   SessionStatus,
   StudyCategory,
   TargetStatus,
 } from '../common/enums';
-import { Course } from '../courses/entities/course.entity';
-import {
-  PriorityService,
-  TopicPriorityItem,
-} from '../priority/priority.service';
+import { PriorityService } from '../priority/priority.service';
 import { StudySession } from '../study-sessions/entities/study-session.entity';
-import { Topic } from '../topics/entities/topic.entity';
+import { TopicMastery } from '../mastery/entities/topic-mastery.entity';
 import {
-  CreateWeeklyReviewDto,
   CreateWeeklyTargetDto,
-  GenerateWeeklyTargetsDto,
-  RollForwardDto,
   UpdateWeeklyTargetDto,
+  WeeklyReviewDto,
 } from './dto/weekly-plan.dto';
 import { WeeklyReview } from './entities/weekly-review.entity';
 import { WeeklyTarget } from './entities/weekly-target.entity';
@@ -35,32 +25,27 @@ export class WeeklyPlansService {
     private readonly targets: Repository<WeeklyTarget>,
     @InjectRepository(WeeklyReview)
     private readonly reviews: Repository<WeeklyReview>,
-    @InjectRepository(Course) private readonly courses: Repository<Course>,
-    @InjectRepository(Topic) private readonly topics: Repository<Topic>,
     @InjectRepository(StudySession)
     private readonly sessions: Repository<StudySession>,
+    @InjectRepository(TopicMastery)
+    private readonly mastery: Repository<TopicMastery>,
     private readonly priority: PriorityService,
   ) {}
 
-  async listByWeek(userId: string, week?: string) {
+  async list(userId: string, week?: string) {
     const weekStart = toMonday(week);
     return this.targets.find({
       where: { userId, weekStart },
-      relations: ['topic', 'course'],
+      relations: ['course', 'topic', 'topic.mastery'],
       order: { priority: 'DESC' },
     });
   }
 
   async create(userId: string, dto: CreateWeeklyTargetDto) {
-    await this.assertCourse(userId, dto.courseId);
-    const topic = await this.topics.findOne({
-      where: { id: dto.topicId },
-      relations: ['mastery'],
-    });
-    if (!topic || topic.courseId !== dto.courseId) {
-      throw new NotFoundException('Topic not found for course');
-    }
     const weekStart = toMonday(dto.weekStart);
+    const mastery = await this.mastery.findOne({
+      where: { topicId: dto.topicId, userId },
+    });
     return this.targets.save(
       this.targets.create({
         userId,
@@ -69,94 +54,63 @@ export class WeeklyPlansService {
         weekStart,
         category: dto.category ?? StudyCategory.CATCH_UP,
         targetMastery: dto.targetMastery ?? 80,
-        currentMasterySnapshot: topic.mastery?.overallScore ?? 0,
+        currentMasterySnapshot: mastery?.overallScore ?? 0,
         targetQuestions: dto.targetQuestions ?? 10,
         priority: dto.priority ?? 50,
+        deadline: dto.deadline ?? addDays(weekStart, 6),
         status: TargetStatus.PENDING,
-        deadline: dto.deadline ? dto.deadline.slice(0, 10) : addDays(weekStart, 6),
       }),
     );
   }
 
   async update(userId: string, id: string, dto: UpdateWeeklyTargetDto) {
-    const row = await this.targets.findOne({ where: { id } });
-    if (!row) throw new NotFoundException('Weekly target not found');
-    if (row.userId !== userId) throw new ForbiddenException();
+    const row = await this.targets.findOne({ where: { id, userId } });
+    if (!row) throw new NotFoundException('Target not found');
     Object.assign(row, dto);
     return this.targets.save(row);
   }
 
-  async generate(userId: string, dto: GenerateWeeklyTargetsDto = {}) {
-    const weekStart = toMonday(dto.weekStart);
-    const limit = dto.limit ?? 12;
+  async generate(userId: string, week?: string) {
+    const weekStart = toMonday(week);
+    const existing = await this.targets.find({ where: { userId, weekStart } });
+    if (existing.length > 0) {
+      return { weekStart, generated: false, targets: existing };
+    }
+
     const allocation = await this.priority.allocation(userId);
-    const ranked = await this.priority.studyNext(userId, 40);
-
-    const currentSlots = Math.max(
-      1,
-      Math.round((limit * allocation.current) / 100),
-    );
-    const catchUpSlots = Math.max(
-      1,
-      Math.round((limit * allocation.catchUp) / 100),
-    );
-    const revisionSlots = Math.max(
-      1,
-      Math.round((limit * allocation.revision) / 100),
-    );
-
-    const byCat = {
-      [StudyCategory.CURRENT]: ranked.filter(
-        (r) => r.category === StudyCategory.CURRENT,
-      ),
-      [StudyCategory.CATCH_UP]: ranked.filter(
-        (r) => r.category === StudyCategory.CATCH_UP,
-      ),
-      [StudyCategory.REVISION]: ranked.filter(
-        (r) => r.category === StudyCategory.REVISION,
-      ),
+    const ranked = await this.priority.studyNext(userId, 30);
+    const total = 10;
+    const counts = {
+      CURRENT: Math.max(1, Math.round((allocation.current / 100) * total)),
+      CATCH_UP: Math.max(1, Math.round((allocation.catchUp / 100) * total)),
+      REVISION: Math.max(1, Math.round((allocation.revision / 100) * total)),
     };
 
-    const picked: TopicPriorityItem[] = [];
-    const take = (items: TopicPriorityItem[], n: number) => {
-      for (const item of items) {
-        if (picked.length >= limit) break;
-        if (picked.some((p) => p.topicId === item.topicId)) continue;
-        if (n <= 0) break;
+    const picked: typeof ranked = [];
+    const used = new Set<string>();
+    for (const cat of ['CURRENT', 'CATCH_UP', 'REVISION'] as const) {
+      const pool = ranked.filter(
+        (i) => i.category === cat && !used.has(i.topicId),
+      );
+      for (const item of pool.slice(0, counts[cat])) {
         picked.push(item);
-        n -= 1;
+        used.add(item.topicId);
       }
-    };
-
-    take(byCat[StudyCategory.CURRENT], currentSlots);
-    take(byCat[StudyCategory.CATCH_UP], catchUpSlots);
-    take(byCat[StudyCategory.REVISION], revisionSlots);
-    // Fill remainder from overall ranking
-    take(ranked, limit - picked.length);
-
-    // Clear existing pending for this week (regenerate)
-    const existing = await this.targets.find({
-      where: {
-        userId,
-        weekStart,
-        status: In([TargetStatus.PENDING, TargetStatus.IN_PROGRESS]),
-      },
-    });
-    if (existing.length) await this.targets.remove(existing);
+    }
+    for (const item of ranked) {
+      if (picked.length >= total) break;
+      if (!used.has(item.topicId)) {
+        picked.push(item);
+        used.add(item.topicId);
+      }
+    }
 
     const created: WeeklyTarget[] = [];
-    for (const item of picked) {
+    for (const item of picked.slice(0, total)) {
       const targetMastery =
         item.overallMastery >= 76
-          ? Math.min(100, Math.max(90, item.overallMastery + 5))
-          : Math.min(90, Math.max(70, item.overallMastery + 20));
-      const targetQuestions =
-        item.category === StudyCategory.REVISION
-          ? 8
-          : item.category === StudyCategory.CURRENT
-            ? 12
-            : 15;
-
+          ? Math.min(100, item.overallMastery + 5)
+          : Math.min(90, Math.max(80, item.overallMastery + 20));
       created.push(
         await this.targets.save(
           this.targets.create({
@@ -167,218 +121,223 @@ export class WeeklyPlansService {
             category: item.category,
             targetMastery,
             currentMasterySnapshot: item.overallMastery,
-            targetQuestions,
+            targetQuestions: item.category === StudyCategory.REVISION ? 8 : 15,
             priority: Math.round(item.priority),
-            status: TargetStatus.PENDING,
             deadline: addDays(weekStart, 6),
+            status: TargetStatus.PENDING,
           }),
         ),
       );
     }
 
-    return {
-      weekStart,
-      allocation,
-      targets: await this.listByWeek(userId, weekStart),
-      generated: created.length,
-    };
+    return { weekStart, generated: true, allocation, targets: created };
   }
 
-  async rollForward(userId: string, dto: RollForwardDto = {}) {
-    const fromWeek = toMonday(dto.fromWeek);
-    const toWeek = toMonday(dto.toWeek ?? addDays(fromWeek, 7));
+  async rollForward(userId: string, fromWeek?: string) {
+    const weekStart = toMonday(fromWeek);
+    const nextWeek = addDays(weekStart, 7);
     const unfinished = await this.targets.find({
       where: {
         userId,
-        weekStart: fromWeek,
+        weekStart,
         status: In([TargetStatus.PENDING, TargetStatus.IN_PROGRESS]),
       },
     });
 
-    if (unfinished.length === 0) {
-      return { fromWeek, toWeek, rolled: 0, targets: [] };
-    }
+    const ranked = await this.priority.computeAll(userId);
+    const rankMap = new Map(ranked.map((r) => [r.topicId, r]));
 
-    const ranked = await this.priority.studyNext(userId, 50);
-    const scoreMap = new Map(ranked.map((r) => [r.topicId, r]));
-
-    const rescored = unfinished
-      .map((t) => {
-        const item = scoreMap.get(t.topicId);
-        return {
-          target: t,
-          priority: item?.priority ?? t.priority,
-          category: item?.category ?? t.category,
-          mastery: item?.overallMastery ?? t.currentMasterySnapshot,
-        };
-      })
-      .sort((a, b) => b.priority - a.priority);
+    const scored = unfinished
+      .map((t) => ({
+        target: t,
+        score: rankMap.get(t.topicId)?.priority ?? t.priority,
+        category: rankMap.get(t.topicId)?.category ?? t.category,
+      }))
+      .sort((a, b) => b.score - a.score);
 
     const rolled: WeeklyTarget[] = [];
-    for (const entry of rescored) {
-      entry.target.status = TargetStatus.ROLLED;
-      await this.targets.save(entry.target);
-
-      const targetMastery =
-        entry.mastery >= 76
-          ? Math.min(100, Math.max(90, entry.mastery + 5))
-          : Math.min(90, Math.max(70, entry.mastery + 15));
-
+    for (const item of scored) {
+      item.target.status = TargetStatus.ROLLED;
+      await this.targets.save(item.target);
+      const mastery = rankMap.get(item.target.topicId)?.overallMastery ?? 0;
       rolled.push(
         await this.targets.save(
           this.targets.create({
             userId,
-            courseId: entry.target.courseId,
-            topicId: entry.target.topicId,
-            weekStart: toWeek,
-            category: entry.category,
-            targetMastery,
-            currentMasterySnapshot: entry.mastery,
-            targetQuestions: entry.target.targetQuestions,
-            priority: Math.round(entry.priority),
+            courseId: item.target.courseId,
+            topicId: item.target.topicId,
+            weekStart: nextWeek,
+            category: item.category,
+            targetMastery: item.target.targetMastery,
+            currentMasterySnapshot: mastery,
+            targetQuestions: item.target.targetQuestions,
+            priority: Math.round(item.score),
+            deadline: addDays(nextWeek, 6),
             status: TargetStatus.PENDING,
-            deadline: addDays(toWeek, 6),
-            rolledFromId: entry.target.id,
+            rolledFromId: item.target.id,
           }),
         ),
       );
     }
 
     return {
-      fromWeek,
-      toWeek,
-      rolled: rolled.length,
-      targets: await this.listByWeek(userId, toWeek),
+      from: weekStart,
+      to: nextWeek,
+      rolledCount: rolled.length,
+      note: 'Priorities were recalculated; unfinished work was not copied blindly.',
+      targets: rolled,
     };
   }
 
   async recoveryPlan(userId: string, week?: string) {
     const weekStart = toMonday(week);
-    const targets = await this.listByWeek(userId, weekStart);
-    const total = targets.length;
-    const completed = targets.filter(
-      (t) => t.status === TargetStatus.COMPLETED,
-    ).length;
-    const completionRate = total === 0 ? 100 : (completed / total) * 100;
-
-    const unfinished = targets.filter(
+    const targets = await this.list(userId, weekStart);
+    const completed = targets.filter((t) => t.status === TargetStatus.COMPLETED);
+    const remaining = targets.filter(
       (t) =>
-        t.status === TargetStatus.PENDING ||
-        t.status === TargetStatus.IN_PROGRESS,
+        t.status === TargetStatus.PENDING || t.status === TargetStatus.IN_PROGRESS,
     );
+    const rate = targets.length === 0 ? 1 : completed.length / targets.length;
+    const ranked = await this.priority.computeAll(userId);
+    const rankMap = new Map(ranked.map((r) => [r.topicId, r]));
 
-    if (completionRate >= 70 || unfinished.length === 0) {
-      return {
-        weekStart,
-        completionRate: Math.round(completionRate * 10) / 10,
-        needsRecovery: false,
-        message:
-          completionRate >= 70
-            ? 'Completion is at or above 70% — no recovery redistribution needed'
-            : 'No unfinished targets',
-        tomorrowFocus: [],
-        rollCandidates: [],
-        allocation: await this.priority.allocation(userId),
-      };
-    }
+    const ordered = remaining
+      .map((t) => ({
+        ...t,
+        livePriority: rankMap.get(t.topicId)?.priority ?? t.priority,
+      }))
+      .sort((a, b) => b.livePriority - a.livePriority);
 
-    const ranked = await this.priority.studyNext(userId, 50);
-    const scoreMap = new Map(ranked.map((r) => [r.topicId, r.priority]));
-    const sorted = [...unfinished].sort(
-      (a, b) =>
-        (scoreMap.get(b.topicId) ?? b.priority) -
-        (scoreMap.get(a.topicId) ?? a.priority),
-    );
-
-    const tomorrowCount = Math.max(1, Math.ceil(sorted.length * 0.4));
-    const tomorrowFocus = sorted.slice(0, tomorrowCount);
-    const rollCandidates = sorted.slice(tomorrowCount);
-    const allocation = await this.priority.allocation(userId);
+    const tomorrowFocusCount = Math.max(1, Math.ceil(remaining.length * 0.4));
+    const tomorrowFocus = ordered.slice(0, tomorrowFocusCount);
+    const later = ordered.slice(tomorrowFocusCount);
 
     return {
-      weekStart,
-      completionRate: Math.round(completionRate * 10) / 10,
-      needsRecovery: true,
-      message:
-        'Redistribute unfinished work: focus tomorrow on top-priority items; roll the rest',
-      tomorrowFocus,
-      rollCandidates,
-      allocation,
-      suggestedAction:
-        allocation.mode === 'behind'
-          ? 'Shift more time to catch-up this week'
-          : 'Keep allocation; re-prioritize unfinished targets',
+      missedHint:
+        rate < 0.7
+          ? `You completed ${completed.length} of ${targets.length} weekly targets. Do not attempt all remaining work tomorrow.`
+          : 'Week is on track. Keep the current mix of current + catch-up + revision.',
+      original: targets.length,
+      completed: completed.length,
+      remaining: remaining.length,
+      completionRate: Math.round(rate * 100),
+      tomorrowFocus: tomorrowFocus.map((t) => ({
+        id: t.id,
+        courseId: t.courseId,
+        topicId: t.topicId,
+        topicTitle: t.topic?.title,
+        courseName: t.course?.name,
+        category: t.category,
+        priority: t.livePriority,
+      })),
+      rollLater: later.map((t) => ({
+        id: t.id,
+        topicTitle: t.topic?.title,
+        courseName: t.course?.name,
+        category: t.category,
+      })),
+      orderHint: [
+        'Upcoming assessment',
+        'Weak high-value topic',
+        'Current lecture',
+        'Lower-priority revision',
+      ],
     };
   }
 
-  async createReview(userId: string, dto: CreateWeeklyReviewDto) {
+  async createReview(userId: string, dto: WeeklyReviewDto) {
     const weekStart = toMonday(dto.weekStart);
-    const weekEnd = addDays(weekStart, 6);
-    const sessions = await this.sessions.find({
-      where: {
-        userId,
-        status: SessionStatus.COMPLETED,
-        startedAt: Between(
-          new Date(`${weekStart}T00:00:00`),
-          new Date(`${weekEnd}T23:59:59`),
-        ),
-      },
-    });
-
-    const targets = await this.listByWeek(userId, weekStart);
-    const completedTargets = targets.filter(
-      (t) => t.status === TargetStatus.COMPLETED,
-    ).length;
-    const totalMinutes = sessions.reduce(
-      (s, x) => s + (x.durationMinutes ?? 0),
-      0,
-    );
-    const masteryGains = sessions
-      .filter((s) => s.masteryAfter != null)
-      .map((s) => (s.masteryAfter ?? 0) - (s.masteryBefore ?? 0));
-    const avgGain =
-      masteryGains.length === 0
-        ? 0
-        : masteryGains.reduce((a, b) => a + b, 0) / masteryGains.length;
-
-    const summary = {
-      sessionsCompleted: sessions.length,
-      totalMinutes,
-      targetsTotal: targets.length,
-      targetsCompleted: completedTargets,
-      completionRate:
-        targets.length === 0
-          ? 100
-          : Math.round((completedTargets / targets.length) * 1000) / 10,
-      averageMasteryGain: Math.round(avgGain * 10) / 10,
+    const summary = await this.buildSummary(userId, weekStart);
+    const existing = await this.reviews.findOne({ where: { userId, weekStart } });
+    const payload = {
+      userId,
+      weekStart,
+      summary,
+      whatWorked: dto.whatWorked ?? '',
+      whatDidntWork: dto.whatDidntWork ?? '',
+      stillWeak: dto.stillWeak ?? '',
+      whyMissed: dto.whyMissed ?? '',
+      nextWeekChange: dto.nextWeekChange ?? '',
     };
-
-    const review = await this.reviews.save(
-      this.reviews.create({
-        userId,
-        weekStart,
-        summary,
-        whatWorked: dto.whatWorked ?? '',
-        whatDidntWork: dto.whatDidntWork ?? '',
-        stillWeak: dto.stillWeak ?? '',
-        whyMissed: dto.whyMissed ?? '',
-        nextWeekChange: dto.nextWeekChange ?? '',
-      }),
-    );
-    return review;
+    if (existing) {
+      Object.assign(existing, payload);
+      return this.reviews.save(existing);
+    }
+    return this.reviews.save(this.reviews.create(payload));
   }
 
   async latestReview(userId: string) {
-    const review = await this.reviews.findOne({
+    return this.reviews.findOne({
       where: { userId },
-      order: { createdAt: 'DESC' },
+      order: { weekStart: 'DESC' },
     });
-    return review ?? null;
   }
 
-  private async assertCourse(userId: string, courseId: string) {
-    const course = await this.courses.findOne({ where: { id: courseId, userId } });
-    if (!course) throw new NotFoundException('Course not found');
-    return course;
+  async previewReview(userId: string, week?: string) {
+    const weekStart = toMonday(week);
+    return this.buildSummary(userId, weekStart);
   }
+
+  private async buildSummary(userId: string, weekStart: string) {
+    const weekEnd = addDays(weekStart, 7);
+    const sessions = await this.sessions.find({
+      where: { userId, status: SessionStatus.COMPLETED },
+      relations: ['topic', 'course'],
+    });
+    const inWeek = sessions.filter((s) => {
+      const d = formatLike(s.completedAt ?? s.startedAt);
+      return d >= weekStart && d < weekEnd;
+    });
+
+    const questions = inWeek.reduce((a, s) => a + (s.questionsAttempted || 0), 0);
+    const correct = inWeek.reduce((a, s) => a + (s.questionsCorrect || 0), 0);
+    const improved = inWeek.filter(
+      (s) => (s.masteryAfter ?? 0) > (s.masteryBefore ?? 0),
+    );
+    const mastered = inWeek.filter((s) => (s.masteryAfter ?? 0) >= 90);
+    const biggestImprovement = [...inWeek].sort(
+      (a, b) =>
+        (b.masteryAfter ?? 0) -
+        (b.masteryBefore ?? 0) -
+        ((a.masteryAfter ?? 0) - (a.masteryBefore ?? 0)),
+    )[0];
+    const weakest = [...inWeek].sort(
+      (a, b) => (a.masteryAfter ?? 100) - (b.masteryAfter ?? 100),
+    )[0];
+
+    const next = await this.priority.studyNext(userId, 3);
+    const targets = await this.list(userId, weekStart);
+
+    return {
+      weekStart,
+      topicsMastered: mastered.length,
+      topicsImproved: improved.length,
+      practiceQuestions: questions,
+      averageAccuracy:
+        questions === 0 ? 0 : Math.round((correct / questions) * 100),
+      biggestImprovement: biggestImprovement
+        ? `${biggestImprovement.course?.name} — ${biggestImprovement.topic?.title}`
+        : null,
+      biggestWeakness: weakest
+        ? `${weakest.course?.name} — ${weakest.topic?.title}`
+        : null,
+      weeklyTargetsCompleted: targets.filter(
+        (t) => t.status === TargetStatus.COMPLETED,
+      ).length,
+      weeklyTargetsTotal: targets.length,
+      nextWeekPriorities: next.map((n) => ({
+        course: n.courseName,
+        topic: n.topicTitle,
+        mastery: n.overallMastery,
+      })),
+    };
+  }
+}
+
+function formatLike(d: Date) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }

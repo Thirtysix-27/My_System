@@ -39,6 +39,11 @@ export class TopicsController {
     return this.topics.create(user.userId, courseId, dto);
   }
 
+  @Get('topics/:id')
+  one(@CurrentUser() user: { userId: string }, @Param('id') id: string) {
+    return this.topics.getOne(user.userId, id);
+  }
+
   @Patch('topics/:id')
   update(
     @CurrentUser() user: { userId: string },

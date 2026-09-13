@@ -1,109 +1,71 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, Repository } from 'typeorm';
 import { addDays, formatDate } from '../common/date.util';
 import { RevisionResult } from '../common/enums';
-import { Topic } from '../topics/entities/topic.entity';
 import { RevisionRecord } from './entities/revision-record.entity';
-
-const INITIAL_INTERVAL = 3;
 
 @Injectable()
 export class RevisionService {
   constructor(
     @InjectRepository(RevisionRecord)
-    private readonly revisions: Repository<RevisionRecord>,
-    @InjectRepository(Topic) private readonly topics: Repository<Topic>,
+    private readonly records: Repository<RevisionRecord>,
   ) {}
 
   async ensureScheduled(userId: string, topicId: string) {
-    await this.assertTopicOwned(userId, topicId);
-    let row = await this.revisions.findOne({ where: { userId, topicId } });
+    let row = await this.records.findOne({ where: { userId, topicId } });
     if (!row) {
-      const next = new Date(`${addDays(formatDate(new Date()), INITIAL_INTERVAL)}T12:00:00`);
-      row = await this.revisions.save(
-        this.revisions.create({
-          userId,
-          topicId,
-          intervalDays: INITIAL_INTERVAL,
-          nextReviewAt: next,
-          lastResult: null,
-        }),
+      row = this.records.create({
+        userId,
+        topicId,
+        intervalDays: 3,
+        nextReviewAt: new Date(`${addDays(formatDate(new Date()), 3)}T12:00:00`),
+        lastResult: null,
+      });
+    } else if (row.nextReviewAt < new Date()) {
+      row.nextReviewAt = new Date(
+        `${addDays(formatDate(new Date()), row.intervalDays)}T12:00:00`,
       );
     }
-    return row;
+    return this.records.save(row);
   }
 
   async listDue(userId: string) {
-    const now = new Date();
-    return this.revisions.find({
-      where: { userId, nextReviewAt: LessThanOrEqual(now) },
+    return this.records.find({
+      where: { userId, nextReviewAt: LessThanOrEqual(new Date()) },
       relations: ['topic', 'topic.course'],
       order: { nextReviewAt: 'ASC' },
     });
   }
 
   async listAll(userId: string) {
-    return this.revisions.find({
+    return this.records.find({
       where: { userId },
       relations: ['topic', 'topic.course'],
       order: { nextReviewAt: 'ASC' },
     });
   }
 
-  async markReviewed(
-    userId: string,
-    topicId: string,
-    result: RevisionResult,
-  ) {
-    await this.assertTopicOwned(userId, topicId);
-    let row = await this.revisions.findOne({ where: { userId, topicId } });
+  async markReviewed(userId: string, topicId: string, result: RevisionResult) {
+    let row = await this.records.findOne({ where: { userId, topicId } });
     if (!row) {
-      row = this.revisions.create({
+      row = this.records.create({
         userId,
         topicId,
-        intervalDays: INITIAL_INTERVAL,
-        nextReviewAt: new Date(),
+        intervalDays: 3,
       });
     }
 
-    const current = Math.max(1, row.intervalDays || INITIAL_INTERVAL);
-    let nextInterval: number;
-    switch (result) {
-      case RevisionResult.HARD:
-        nextInterval = Math.max(1, Math.ceil(current * 0.75));
-        break;
-      case RevisionResult.GOOD:
-        nextInterval = Math.max(INITIAL_INTERVAL, Math.ceil(current * 1.8));
-        break;
-      case RevisionResult.EASY:
-        nextInterval = Math.max(INITIAL_INTERVAL, Math.ceil(current * 2.5));
-        break;
-      default:
-        nextInterval = current;
-    }
+    let next = row.intervalDays || 3;
+    if (result === RevisionResult.EASY) next = Math.min(30, Math.round(next * 2));
+    else if (result === RevisionResult.GOOD) next = Math.min(21, Math.round(next * 1.5));
+    else next = 1;
 
-    row.intervalDays = nextInterval;
+    row.intervalDays = next;
     row.lastResult = result;
     row.nextReviewAt = new Date(
-      `${addDays(formatDate(new Date()), nextInterval)}T12:00:00`,
+      `${addDays(formatDate(new Date()), next)}T12:00:00`,
     );
-    return this.revisions.save(row);
-  }
-
-  private async assertTopicOwned(userId: string, topicId: string) {
-    const topic = await this.topics.findOne({
-      where: { id: topicId },
-      relations: ['course'],
-    });
-    if (!topic) throw new NotFoundException('Topic not found');
-    if (topic.course.userId !== userId) {
-      throw new ForbiddenException('Topic does not belong to you');
-    }
-    return topic;
+    return this.records.save(row);
   }
 }

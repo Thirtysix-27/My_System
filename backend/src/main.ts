@@ -1,10 +1,16 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { mkdirSync } from 'fs';
 
 async function bootstrap() {
+  mkdirSync('./data', { recursive: true });
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api/v1');
+  app.enableCors({
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    credentials: true,
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -12,10 +18,6 @@ async function bootstrap() {
       transformOptions: { enableImplicitConversion: true },
     }),
   );
-  app.enableCors({
-    origin: ['http://localhost:5173'],
-    credentials: true,
-  });
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();

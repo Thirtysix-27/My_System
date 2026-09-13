@@ -1,29 +1,36 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { IsEnum } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { MarkReviewedDto } from './dto/revision.dto';
+import { RevisionResult } from '../common/enums';
 import { RevisionService } from './revision.service';
+
+class MarkRevisionDto {
+  @IsEnum(RevisionResult)
+  result: RevisionResult;
+}
 
 @Controller('revision')
 @UseGuards(JwtAuthGuard)
 export class RevisionController {
   constructor(private readonly revision: RevisionService) {}
 
-  @Get('due')
-  listDue(@CurrentUser() user: { userId: string }) {
-    return this.revision.listDue(user.userId);
-  }
-
   @Get()
-  listAll(@CurrentUser() user: { userId: string }) {
+  list(@CurrentUser() user: { userId: string }) {
     return this.revision.listAll(user.userId);
   }
 
-  @Post('reviewed')
-  markReviewed(
+  @Get('due')
+  due(@CurrentUser() user: { userId: string }) {
+    return this.revision.listDue(user.userId);
+  }
+
+  @Post(':topicId')
+  mark(
     @CurrentUser() user: { userId: string },
-    @Body() dto: MarkReviewedDto,
+    @Param('topicId') topicId: string,
+    @Body() dto: MarkRevisionDto,
   ) {
-    return this.revision.markReviewed(user.userId, dto.topicId, dto.result);
+    return this.revision.markReviewed(user.userId, topicId, dto.result);
   }
 }
